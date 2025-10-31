@@ -261,31 +261,62 @@ if [ "$(echo "$network" | tr '[:upper:]' '[:lower:]')" != "public" ]; then
             echo "ERROR: subnet_CIDR is not a valid CIDR notation."
             exit 1
         fi
-###START NEW VPC VALIDATION
-		log_info "Checking for existing VPC with label '$network_id'..."
-        # Retrieve list of all VPCs using the central api_call
-        vpc_response=$(api_call "GET" "$BASE_URL/vpcs")
-        if [[ $? -ne 0 ]]; then
-            log_failure "Failed to retrieve VPC list from Linode API."
-        fi
-        # Extract VPC info if label exists
-        vpc_entry=$(echo "$vpc_response" | jq -r \
-            --arg label "$network_id" \
-            '.data[] | select(.label == $label) | "\(.label) \(.region)"' | head -1)
+###START NEW VPC VALIDATION WITH PAGINATION AND CASE SENSITIVITY
+        log_info "Checking for existing VPC with label '$network_id'..."
 
-        if [[ -n "$vpc_entry" ]]; then
-            vpc_label=$(echo "$vpc_entry" | awk '{print $1}')
-            vpc_region=$(echo "$vpc_entry" | awk '{print $2}')
+        # Normalize search label and region for case-insensitive comparison
+        search_label="$(echo "$network_id" | tr '[:upper:]' '[:lower:]')"
+        search_region="$(echo "$region" | tr '[:upper:]' '[:lower:]')"
 
-            if [[ "$vpc_region" != "$region" ]]; then
-                log_failure "VPC '$vpc_label' already exists in region '$vpc_region'. VPC labels must be unique per account."
+        page=1
+        page_size=100
+        found_vpc_json=""
+        total_pages=1
+
+        while : ; do
+            vpc_response=$(api_call "GET" "$BASE_URL/vpcs?page=${page}&page_size=${page_size}")
+            if [[ $? -ne 0 || -z "$vpc_response" ]]; then
+                log_failure "Failed to retrieve VPC list from Linode API."
             fi
 
-            log_info "VPC '$vpc_label' already exists in region '$region'. Proceeding..."
+            # Determine total pages if available (fallback to 1)
+            total_pages=$(echo "$vpc_response" | jq -r '.pages // 1' 2>/dev/null || echo 1)
+
+            # Try to find a vpc entry matching the label (case-insensitive)
+            # We output the full JSON object as base64 so we can keep it intact
+            found_vpc_b64=$(echo "$vpc_response" | jq -r --arg label "$search_label" '
+                .data[]? | select((.label // "" | ascii_downcase) == $label) | @base64' 2>/dev/null | head -n1 || true)
+
+            if [[ -n "$found_vpc_b64" ]]; then
+                # decode found VPC JSON
+                found_vpc_json=$(echo "$found_vpc_b64" | base64 --decode)
+                break
+            fi
+
+            # If we've reached the last page, stop
+            if (( page >= total_pages )); then
+                break
+            fi
+
+            ((page++))
+        done
+
+        if [[ -n "$found_vpc_json" ]]; then
+            vpc_label=$(echo "$found_vpc_json" | jq -r '.label // ""')
+            vpc_region=$(echo "$found_vpc_json" | jq -r '.region // ""')
+            vpc_region_lc=$(echo "$vpc_region" | tr '[:upper:]' '[:lower:]')
+
+            if [[ "$vpc_region_lc" != "$search_region" ]]; then
+                # Log failure as requested: must be unique and already exists in $other_region
+                log_failure "VPC '$vpc_label' already exists in $vpc_region. VPC labels must be unique per account and cannot be reused in a different region."
+            fi
+
+            log_info "VPC '$vpc_label' already exists in region '$vpc_region' (matches requested region). Proceeding..."
         else
+            # Not found — good to create
             log_info "No existing VPC with label '$network_id' found. Proceeding to create new one."
         fi
-####END NEW VALIDATION
+###END BRAND NEW
 	fi
 fi
 
