@@ -341,85 +341,139 @@ if [[ "$bucket_vars_set" == true ]]; then
     #fi
 
     # Function to create bucket access keys
-    create_bucket_keys() {
-        log_info "Creating new bucket access keys..."
-        
-        # Generate random 8-digit suffix
-        random_suffix=$(shuf -i 10000000-99999999 -n 1)
-        deployment_label="${deployment:-linode-deployment}-${random_suffix}"
+	#NEW BUCKET ACCESS FUNCTION
+	create_bucket_keys() {
+    log_info "Creating new bucket access keys..."
 
-        # Attempt to create bucket access keys with retries
-        max_attempts=9
-        attempt=1
-        key_created=false
+    # Generate random 8-digit suffix
+    random_suffix=$(shuf -i 10000000-99999999 -n 1)
+    deployment_label="${deployment:-linode-deployment}-${random_suffix}"
 
-        while [[ $attempt -le $max_attempts ]]; do
-            log_info "Creating bucket access keys (attempt $attempt of $max_attempts)..."
-            key_response=$(curl -s -X POST \
-                https://api.linode.com/v4/object-storage/keys \
-                -H "accept: application/json" \
-                -H "content-type: application/json" \
-                -H "Authorization: Bearer $token" \
-                --data "{\"bucket_access\":[{\"bucket_name\":\"$bucket_name\",\"permissions\":\"read_only\",\"region\":\"$bucket_region\"}],\"label\":\"$deployment_label\"}")
+    # API endpoint and payload
+    url="https://api.linode.com/v4/object-storage/keys"
+    data=$(jq -nc \
+        --arg bucket "$bucket_name" \
+        --arg region "$bucket_region" \
+        --arg label "$deployment_label" \
+        '{bucket_access: [{bucket_name: $bucket, permissions: "read_only", region: $region}], label: $label}'
+    )
 
-            # Check if key creation was successful
-            bucket_key=$(echo "$key_response" | jq -r '.access_key // empty')
-            bucket_secret=$(echo "$key_response" | jq -r '.secret_key // empty')
+    # Use centralized API call function with retries and rate-limit handling
+    key_response=$(api_call "POST" "$url" "$data")
+    if [[ $? -ne 0 ]]; then
+        log_failure "Failed to create bucket access keys after ${MAX_RETRIES:-5} attempts"
+        return 1
+    fi
 
-            if [[ -n "$bucket_key" ]] && [[ -n "$bucket_secret" ]]; then
-                log_info "Bucket access keys created successfully"
-                log_info "Access Key: $bucket_key"
-                log_info "Secret Key: [REDACTED]"
-                key_created=true
+    # Parse access and secret keys
+    bucket_key=$(echo "$key_response" | jq -r '.access_key // empty')
+    bucket_secret=$(echo "$key_response" | jq -r '.secret_key // empty')
 
-                # Write keys back to config file
-                if [[ -f "$CONFIG_FILE" ]]; then
-                    log_info "Writing bucket credentials to $CONFIG_FILE..."
-                    
-                    # Update or add bucket_key
-                    if grep -q '^bucket_key=' "$CONFIG_FILE"; then
-                        sed -i "s|^bucket_key=.*|bucket_key=\"$bucket_key\"|" "$CONFIG_FILE"
-                    else
-                        echo "bucket_key=\"$bucket_key\"" >> "$CONFIG_FILE"
-                    fi
-                    
-                    # Update or add bucket_secret
-                    if grep -q '^bucket_secret=' "$CONFIG_FILE"; then
-                        sed -i "s|^bucket_secret=.*|bucket_secret=\"$bucket_secret\"|" "$CONFIG_FILE"
-                    else
-                        echo "bucket_secret=\"$bucket_secret\"" >> "$CONFIG_FILE"
-                    fi
-                    
-                    log_info "Credentials saved to $CONFIG_FILE"
-                else
-                    log_info "Creating $CONFIG_FILE with bucket credentials..."
-                    echo "bucket_key=\"$bucket_key\"" > "$CONFIG_FILE"
-                    echo "bucket_secret=\"$bucket_secret\"" >> "$CONFIG_FILE"
-                    log_info "Credentials saved to $CONFIG_FILE"
-                fi
+    if [[ -z "$bucket_key" || -z "$bucket_secret" ]]; then
+        error_msg=$(echo "$key_response" | jq -r '.errors[]?.reason // "Unknown error"' | head -1)
+        log_failure "Bucket key creation failed: $error_msg"
+        return 1
+    fi
 
-                # Export the new credentials for use in the rest of the script
-                export bucket_key
-                export bucket_secret
+    log_info "Bucket access keys created successfully"
+    log_info "Access Key: $bucket_key"
+    log_info "Secret Key: [REDACTED]"
 
-                break
-            else
-                error_msg=$(echo "$key_response" | jq -r '.errors[]?.reason // "Unknown error"' | head -1)
-                log_info "Failed to create keys: $error_msg"
-
-                if [[ $attempt -lt $max_attempts ]]; then
-                    log_info "Retrying in 10 seconds..."
-                    sleep 10
-                fi
-            fi
-
-            ((attempt++))
-        done
-
-        if [[ "$key_created" == false ]]; then
-            log_failure "Failed to create bucket access keys after $max_attempts attempts"
+    # --- Save credentials to config file ---
+    if [[ -f "$CONFIG_FILE" ]]; then
+        log_info "Writing bucket credentials to $CONFIG_FILE..."
+        if grep -q '^bucket_key=' "$CONFIG_FILE"; then
+            sed -i "s|^bucket_key=.*|bucket_key=\"$bucket_key\"|" "$CONFIG_FILE"
+        else
+            echo "bucket_key=\"$bucket_key\"" >> "$CONFIG_FILE"
         fi
-    }
+        if grep -q '^bucket_secret=' "$CONFIG_FILE"; then
+            sed -i "s|^bucket_secret=.*|bucket_secret=\"$bucket_secret\"|" "$CONFIG_FILE"
+        else
+            echo "bucket_secret=\"$bucket_secret\"" >> "$CONFIG_FILE"
+        fi
+    else
+        log_info "Creating $CONFIG_FILE with bucket credentials..."
+        {
+            echo "bucket_key=\"$bucket_key\""
+            echo "bucket_secret=\"$bucket_secret\""
+        } > "$CONFIG_FILE"
+    fi
+    log_info "Credentials saved to $CONFIG_FILE"
+
+    # Export for later script use
+    export bucket_key bucket_secret
+    } 
+	###End Test Function
+    #create_bucket_keys() {
+    #    log_info "Creating new bucket access keys..."
+    # Generate random 8-digit suffix
+    #    random_suffix=$(shuf -i 10000000-99999999 -n 1)
+    #    deployment_label="${deployment:-linode-deployment}-${random_suffix}"
+        # Attempt to create bucket access keys with retries
+        #max_attempts=9
+        #attempt=1
+        #key_created=false
+        #while [[ $attempt -le $max_attempts ]]; do
+        #    log_info "Creating bucket access keys (attempt $attempt of $max_attempts)..."
+        #    key_response=$(curl -s -X POST \
+        #        https://api.linode.com/v4/object-storage/keys \
+        #        -H "accept: application/json" \
+        #        -H "content-type: application/json" \
+        #        -H "Authorization: Bearer $token" \
+        #        --data "{\"bucket_access\":[{\"bucket_name\":\"$bucket_name\",\"permissions\":\"read_only\",\"region\":\"$bucket_region\"}],\"label\":\"$deployment_label\"}")
+        #
+            # Check if key creation was successful
+        #    bucket_key=$(echo "$key_response" | jq -r '.access_key // empty')
+        #    bucket_secret=$(echo "$key_response" | jq -r '.secret_key // empty')
+        #    if [[ -n "$bucket_key" ]] && [[ -n "$bucket_secret" ]]; then
+        #        log_info "Bucket access keys created successfully"
+        #        log_info "Access Key: $bucket_key"
+        #        log_info "Secret Key: [REDACTED]"
+        #        key_created=true
+                # Write keys back to config file
+        #        if [[ -f "$CONFIG_FILE" ]]; then
+        #            log_info "Writing bucket credentials to $CONFIG_FILE..."
+        #            
+                    # Update or add bucket_key
+        #            if grep -q '^bucket_key=' "$CONFIG_FILE"; then
+        #                sed -i "s|^bucket_key=.*|bucket_key=\"$bucket_key\"|" "$CONFIG_FILE"
+        #            else
+        #                echo "bucket_key=\"$bucket_key\"" >> "$CONFIG_FILE"
+        #            fi
+        #            
+                    # Update or add bucket_secret
+        #            if grep -q '^bucket_secret=' "$CONFIG_FILE"; then
+        #                sed -i "s|^bucket_secret=.*|bucket_secret=\"$bucket_secret\"|" "$CONFIG_FILE"
+        #            else
+        #                echo "bucket_secret=\"$bucket_secret\"" >> "$CONFIG_FILE"
+        #            fi
+        #            log_info "Credentials saved to $CONFIG_FILE"
+        #        else
+        #            log_info "Creating $CONFIG_FILE with bucket credentials..."
+        #            echo "bucket_key=\"$bucket_key\"" > "$CONFIG_FILE"
+        #            echo "bucket_secret=\"$bucket_secret\"" >> "$CONFIG_FILE"
+        #            log_info "Credentials saved to $CONFIG_FILE"
+        #        fi
+                # Export the new credentials for use in the rest of the script
+        #        export bucket_key
+        #        export bucket_secret
+        #        break
+        #    else
+        #        error_msg=$(echo "$key_response" | jq -r '.errors[]?.reason // "Unknown error"' | head -1)
+        #        log_info "Failed to create keys: $error_msg"
+        #        if [[ $attempt -lt $max_attempts ]]; then
+        #            log_info "Retrying in 10 seconds..."
+        #            sleep 10
+        #        fi
+        #    fi
+        #    ((attempt++))
+        #done
+        #if [[ "$key_created" == false ]]; then
+        #    log_failure "Failed to create bucket access keys after $max_attempts attempts"
+        #fi
+    #}
+###END OLD KEY CREATE
 
     # Check bucket access credentials (separate from bucket configuration vars)
     if [[ -n "$bucket_key" ]] && [[ -n "$bucket_secret" ]]; then
