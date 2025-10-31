@@ -170,6 +170,30 @@ api_call() {
     return 1
 }
 ###END API CALL FUNCTION
+##Wrapper for api_call to handle pagination
+get_all_pages() {
+    local url="$1"
+    local all_data="[]"
+    local page=1
+    local total_pages=1
+
+    # First request
+    local response
+    response=$(api_call "GET" "${url}?page=${page}" "") || return 1
+    total_pages=$(echo "$response" | jq -r '.pages // 1')
+
+    all_data=$(echo "$response" | jq '.data')
+
+    # Loop through additional pages, if any
+    while (( page < total_pages )); do
+        ((page++))
+        response=$(api_call "GET" "${url}?page=${page}" "") || return 1
+        all_data=$(jq -s '[.[0][] , .[1][]]' <(echo "$all_data") <(echo "$response" | jq '.data'))
+    done
+
+    echo "$all_data"
+}
+#End api_call wrapper
 echo "Validating token and grants..."
 response=$(api_call "GET" "${API_BASE}/profile/tokens")
 echo "API call exit code: $?"
@@ -258,79 +282,88 @@ validate_cidr() {
         return 1
     fi
 }
-
 # Network validation
 if [ "$(echo "$network" | tr '[:upper:]' '[:lower:]')" != "public" ]; then
-    # Validate network_id: must be 1-40 alphanumeric
+    # Validate network_id: must be 1-40 alphanumeric or dash
     if ! [[ "$network_id" =~ ^[a-zA-Z0-9-]{1,40}$ ]]; then
-        echo "ERROR: network_id must be 1 - 40 alphanumeric characters or dashes."
-        exit 1
+        log_failure "network_id must be 1–40 alphanumeric characters or dashes."
     fi
-    # If network is VPC, validate subnet_CIDR
+
+    # If network is VPC, perform extra validation
     if [ "$(echo "$network" | tr '[:upper:]' '[:lower:]')" = "vpc" ]; then
         if ! validate_cidr "$subnet_CIDR"; then
-            echo "ERROR: subnet_CIDR is not a valid CIDR notation."
-            exit 1
+            log_failure "subnet_CIDR is not a valid CIDR notation."
         fi
-###START NEW VPC VALIDATION WITH PAGINATION AND CASE SENSITIVITY
+
         log_info "Checking for existing VPC with label '$network_id'..."
 
-        # Normalize search label and region for case-insensitive comparison
+        # Normalize comparison strings
         search_label="$(echo "$network_id" | tr '[:upper:]' '[:lower:]')"
         search_region="$(echo "$region" | tr '[:upper:]' '[:lower:]')"
 
-        page=1
-        page_size=100
-        found_vpc_json=""
-        total_pages=1
+        # 1. Try single-shot large page to minimize calls
+        vpc_response=$(api_call "GET" "${API_BASE}/vpcs?page_size=500")
+        if [[ $? -ne 0 || -z "$vpc_response" ]]; then
+            log_failure "Failed to retrieve VPC list from Linode API."
+        fi
 
-        while : ; do
-            vpc_response=$(api_call "GET" "$BASE_URL/vpcs?page=${page}&page_size=${page_size}")
-            if [[ $? -ne 0 || -z "$vpc_response" ]]; then
-                log_failure "Failed to retrieve VPC list from Linode API."
+        total_pages=$(echo "$vpc_response" | jq -r '.pages // 1')
+
+        # Function to check response for matching label
+        check_vpc_match() {
+            local json="$1"
+            local match
+            match=$(echo "$json" | jq -r --arg label "$search_label" '
+                .data[]? | select((.label // "" | ascii_downcase) == $label) | [.label, .region] | @tsv' 2>/dev/null)
+            if [[ -n "$match" ]]; then
+                while IFS=$'\t' read -r vpc_label vpc_region; do
+                    if [[ -n "$vpc_label" ]]; then
+                        vpc_label_lc=$(echo "$vpc_label" | tr '[:upper:]' '[:lower:]')
+                        vpc_region_lc=$(echo "$vpc_region" | tr '[:upper:]' '[:lower:]')
+                        if [[ "$vpc_label_lc" == "$search_label" ]]; then
+                            if [[ "$vpc_region_lc" != "$search_region" ]]; then
+                                log_failure "VPC '$vpc_label' already exists in region '$vpc_region'. VPC labels must be unique per account and cannot be reused in a different region."
+                            else
+                                log_info "VPC '$vpc_label' already exists in region '$vpc_region' (matches requested region). Proceeding..."
+                                return 0
+                            fi
+                        fi
+                    fi
+                done <<< "$match"
             fi
+            return 1
+        }
 
-            # Determine total pages if available (fallback to 1)
-            total_pages=$(echo "$vpc_response" | jq -r '.pages // 1' 2>/dev/null || echo 1)
-
-            # Try to find a vpc entry matching the label (case-insensitive)
-            # We output the full JSON object as base64 so we can keep it intact
-            found_vpc_b64=$(echo "$vpc_response" | jq -r --arg label "$search_label" '
-                .data[]? | select((.label // "" | ascii_downcase) == $label) | @base64' 2>/dev/null | head -n1 || true)
-
-            if [[ -n "$found_vpc_b64" ]]; then
-                # decode found VPC JSON
-                found_vpc_json=$(echo "$found_vpc_b64" | base64 --decode)
-                break
-            fi
-
-            # If we've reached the last page, stop
-            if (( page >= total_pages )); then
-                break
-            fi
-
-            ((page++))
-        done
-
-        if [[ -n "$found_vpc_json" ]]; then
-            vpc_label=$(echo "$found_vpc_json" | jq -r '.label // ""')
-            vpc_region=$(echo "$found_vpc_json" | jq -r '.region // ""')
-            vpc_region_lc=$(echo "$vpc_region" | tr '[:upper:]' '[:lower:]')
-
-            if [[ "$vpc_region_lc" != "$search_region" ]]; then
-                # Log failure as requested: must be unique and already exists in $other_region
-                log_failure "VPC '$vpc_label' already exists in $vpc_region. VPC labels must be unique per account and cannot be reused in a different region."
-            fi
-
-            log_info "VPC '$vpc_label' already exists in region '$vpc_region' (matches requested region). Proceeding..."
+        # 2. Evaluate first page or full single-shot response
+        if check_vpc_match "$vpc_response"; then
+            found=true
         else
-            # Not found — good to create
+            found=false
+        fi
+
+        # 3. If there are multiple pages, iterate until we find or finish
+        if [[ "$found" == false && "$total_pages" -gt 1 ]]; then
+            page=2
+            while (( page <= total_pages )); do
+                vpc_response=$(api_call "GET" "${API_BASE}/vpcs?page=$page")
+                if [[ $? -ne 0 || -z "$vpc_response" ]]; then
+                    log_failure "Failed to retrieve VPC list (page $page)."
+                fi
+                if check_vpc_match "$vpc_response"; then
+                    found=true
+                    break
+                fi
+                ((page++))
+            done
+        fi
+
+        # 4. If not found at all
+        if [[ "$found" == false ]]; then
             log_info "No existing VPC with label '$network_id' found. Proceeding to create new one."
         fi
-###END BRAND NEW
-	fi
+    fi
 fi
-
+#END NEW NET VAL
 echo "Instance variable inputs validated... Checking Object Storage..."
 
 # Counter for failed attempts
@@ -379,22 +412,20 @@ if [[ "$bucket_vars_set" == true ]]; then
 
     log_info "Bucket endpoint verified: $bucket_endpoint"
 
-###This feature does not work on larger buckets, response is paginated and needs more work
     # Validate image_name exists in bucket
-    #log_info "Checking if image '$image_name' exists in bucket..."
-    #object_list=$(curl -s --request GET \
-        #--url "https://api.linode.com/v4/object-storage/buckets/$bucket_region/$bucket_name/object-list" \
-        #--header 'accept: application/json' \
-        #--header "authorization: Bearer $token")
-	object_list=$(api_call "GET" "${API_BASE}/object-storage/buckets/${bucket_region}/${bucket_name}/object-list")
-    # Check if image exists in the object list
-    #if echo "$object_list" | jq -e --arg img "$image_name" '.data[]? | select(.name == $img)' > /dev/null 2>&1; then
-    #    log_info "Image '$image_name' verified in bucket"
-    #    image_verified=true
-    #else
-    #    log_failure "image_name '$image_name' provided is not valid (not found in bucket)"
-    #fi
-
+    log_info "Checking if image '$image_name' exists in bucket..."
+    #Get objects from bucket
+    object_list=$(get_all_pages "${API_BASE}/object-storage/buckets/${bucket_region}/${bucket_name}/object-list")
+    if [[ $? -ne 0 || -z "$object_list" ]]; then
+        log_failure "Failed to retrieve object list from bucket '$bucket_name'."
+    fi
+    #Check if image exists...
+    if echo "$object_list" | jq -e --arg img "$image_name" '.[]? | select(.name == $img)' > /dev/null 2>&1; then
+        log_info "Image '$image_name' verified in bucket."
+        image_verified=true
+    else
+        log_failure "image_name '$image_name' provided is not valid (not found in bucket)."
+    fi
 #NEW BUCKET KEY CREATE FUNCTION
 	create_bucket_keys() {
     log_info "Creating new bucket access keys..."
@@ -609,14 +640,36 @@ if [[ "$network" == "vpc" ]]; then
     # Check for subnet
     echo "Checking for subnet: $subnet_CIDR"
     subnet_response=$(api_call "GET" "${API_BASE}/vpcs/${vpc_id}/subnets")
-    echo "DEBUG: $subnet_response"
+    log_info "DEBUG: $subnet_response"
     subnet_id=$(echo "$subnet_response" | jq -r --arg cidr "$subnet_CIDR" \
         '.data[] | select(.ipv4 == $cidr) | .id')
     
     if [[ -z "$subnet_id" || "$subnet_id" == "null" ]]; then
         echo "Subnet not found, creating: $subnet_CIDR"
-	subnet_data="{\"label\":\"subnet-${network_id}\",\"ipv4\":\"$subnet_CIDR\"}"
-	echo "DEBUG: $subnet_data"
+	###Subnet label create
+	base_label="subnet-${network_id}"
+        new_label="$base_label"
+	# Build a set of existing labels for this VPC
+        existing_labels=$(echo "$subnet_response" | jq -r '.data[].label')
+
+        # Increment label if collision exists
+        while echo "$existing_labels" | grep -qx "$new_label"; do
+            if [[ "$new_label" =~ -([0-9]+)$ ]]; then
+            # Ends with a number, increment it
+                num="${BASH_REMATCH[1]}"
+                ((num++))
+                new_label="${base_label}-${num}"
+            else
+            # Ends with letters, append -1
+                new_label="${base_label}-1"
+            fi
+            base_label="$base_label"  # keep original base for next increment
+        done
+        echo "DEBUG: Using subnet label: $new_label"
+	###End subnet label create
+	
+	subnet_data="{\"label\":\"${new_label}\",\"ipv4\":\"$subnet_CIDR\"}"
+	log_info "DEBUG: $subnet_data"
 	subnet_create=$(api_call "POST" "${API_BASE}/vpcs/${vpc_id}/subnets" "${subnet_data}")
         subnet_id=$(echo "$subnet_create" | jq -r '.id')
         if [[ -z "$subnet_id" || "$subnet_id" == "null" ]]; then
@@ -875,3 +928,4 @@ echo "Instance ID: $instance_id"
 echo "Log file: $log_file"
 echo "Alpine Config: $alpine_id"
 echo "Windows Config: $windows_int"
+
