@@ -33,7 +33,7 @@ BUCKET_ENDPOINT="${BUCKET_ENDPOINT:-$bucket_endpoint}"
 
 LOG_FILE="/var/log/image-conversion.log"
 API_BASE="https://api.linode.com/v4"
-MAX_RETRIES=50
+MAX_RETRIES=150
 RETRY_DELAY=5
 
 # Logging function
