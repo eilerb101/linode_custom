@@ -255,15 +255,40 @@ if [ "$(echo "$network" | tr '[:upper:]' '[:lower:]')" != "public" ]; then
         echo "ERROR: network_id must be 1 - 40 alphanumeric characters or dashes."
         exit 1
     fi
-
     # If network is VPC, validate subnet_CIDR
     if [ "$(echo "$network" | tr '[:upper:]' '[:lower:]')" = "vpc" ]; then
         if ! validate_cidr "$subnet_CIDR"; then
             echo "ERROR: subnet_CIDR is not a valid CIDR notation."
             exit 1
         fi
-    fi
+###START NEW VPC VALIDATION
+		log_info "Checking for existing VPC with label '$network_id'..."
+        # Retrieve list of all VPCs using the central api_call
+        vpc_response=$(api_call "GET" "$BASE_URL/vpcs")
+        if [[ $? -ne 0 ]]; then
+            log_failure "Failed to retrieve VPC list from Linode API."
+        fi
+        # Extract VPC info if label exists
+        vpc_entry=$(echo "$vpc_response" | jq -r \
+            --arg label "$network_id" \
+            '.data[] | select(.label == $label) | "\(.label) \(.region)"' | head -1)
+
+        if [[ -n "$vpc_entry" ]]; then
+            vpc_label=$(echo "$vpc_entry" | awk '{print $1}')
+            vpc_region=$(echo "$vpc_entry" | awk '{print $2}')
+
+            if [[ "$vpc_region" != "$region" ]]; then
+                log_failure "VPC '$vpc_label' already exists in region '$vpc_region'. VPC labels must be unique per account."
+            fi
+
+            log_info "VPC '$vpc_label' already exists in region '$region'. Proceeding..."
+        else
+            log_info "No existing VPC with label '$network_id' found. Proceeding to create new one."
+        fi
+####END NEW VALIDATION
+	fi
 fi
+
 echo "Instance variable inputs validated... Checking Object Storage..."
 
 # Counter for failed attempts
