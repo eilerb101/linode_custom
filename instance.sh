@@ -5,6 +5,17 @@
 
 set -e
 #set -x
+# Function to log failures
+log_failure() {
+    local message="$1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] FAILURE: $message" | tee "failed-${FAIL_COUNTER}.log"
+    exit 1
+}
+
+# Function to log info messages
+log_info() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $1"
+}
 # Configuration file path
 CONFIG_FILE="instance.config"
 # Function to get config value from file or environment variable
@@ -327,18 +338,6 @@ FAIL_COUNTER=1
 while [[ -f "failed-${FAIL_COUNTER}.log" ]]; do
     ((FAIL_COUNTER++))
 done
-
-# Function to log failures
-log_failure() {
-    local message="$1"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] FAILURE: $message" | tee "failed-${FAIL_COUNTER}.log"
-    exit 1
-}
-
-# Function to log info messages
-log_info() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $1"
-}
 
 # Function to update or add variable in config file
 update_config_var() {
