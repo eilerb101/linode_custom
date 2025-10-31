@@ -40,6 +40,7 @@ get_config() {
 token=$(get_config "token")
 label=$(get_config "label")
 tag=$(get_config "tag")
+root_pass=$(get_config "root_pass")
 region=$(get_config "region")
 linode_type=$(get_config "linode_type")
 memory=$(( $(get_config "memory") * 1024))
