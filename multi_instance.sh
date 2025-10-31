@@ -754,7 +754,7 @@ create_disk1=$(cat <<EOF
   "filesystem": "ext4",
   "image": "linode/alpine3.22",
   "label": "alpine",
-  "root_pass": "LinodeRootPass",
+  "root_pass": "$root_pass",
   "size": $alpine_disk_size,
   "stackscript_id": $StackScriptID,
   "stackscript_data": {
