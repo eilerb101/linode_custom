@@ -719,10 +719,43 @@ if ! [[ "$qty" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 log_info "Creating $qty instance(s)..."
+wait_for_disk_ready() {
+    local instance_id="$1"
+    local disk_id="$2"
+    local label="$3"
+    local max_wait=180  # seconds
+    local interval=5
+    local elapsed=0
+
+    echo "Waiting for disk '$label' (ID: $disk_id) to become ready..."
+
+    while (( elapsed < max_wait )); do
+        response=$(api_call "GET" "${API_BASE}/linode/instances/${instance_id}/disks/${disk_id}")
+        if [[ $? -ne 0 || -z "$response" ]]; then
+            echo "Failed to query disk status for $label. Retrying in $interval seconds..." >&2
+            sleep "$interval"
+            ((elapsed+=interval))
+            continue
+        fi
+
+        status=$(echo "$response" | jq -r '.status // empty')
+        if [[ "$status" == "ready" ]]; then
+            echo "Disk '$label' is ready."
+            return 0
+        fi
+
+        echo "Disk '$label' status: $status (waiting...)"
+        sleep "$interval"
+        ((elapsed+=interval))
+    done
+
+    echo "ERROR: Timed out waiting for disk '$label' to become ready after ${max_wait}s" >&2
+    return 1
+}
+###NEW LOOP
 declare -a created_instances=()
 for instance_num in $(seq 1 "$qty"); do
     log_info "=== Creating instance $instance_num of $qty ==="
-###NEW LOOP    
 echo "Creating disks: Alpine=${alpine_disk_size}MB, Raw=${raw_disk_size}MB"
 
 # Create Linode instance
@@ -800,6 +833,11 @@ alpine_disk_fs=$(echo "$disk1_response" | jq -r '.filesystem')
 
 echo "Alpine Disk ID: $alpine_disk_id"
 echo "Raw Disk ID: $raw_disk_id"
+##WAIT FOR DISK READY
+
+wait_for_disk_ready "$instance_id" "$alpine_disk_id" "Alpine Disk" || log_failure "Alpine disk not ready"
+wait_for_disk_ready "$instance_id" "$raw_disk_id" "Raw Disk" || log_failure "Raw disk not ready"
+log_info "Disks are ready"
 echo "Creating Initial Alpine configuration..."
 alpine_initial_payload=$(cat <<EOF
 {
