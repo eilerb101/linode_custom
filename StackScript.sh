@@ -129,7 +129,7 @@ log "Install target disk: $INSTALL_DISK"
 # --- Discover Config IDs dynamically ---
 log "Fetching Linode configuration list..."
 configs=$(api_call "GET" "${API_BASE}/linode/instances/${INSTANCE_ID}/configs")
-
+log "$configs"
 if [ $? -ne 0 ] || echo "$configs" | grep -q "\"errors\""; then
     log "ERROR: Failed to fetch Linode configs"
     log "Response: $configs"
@@ -138,8 +138,9 @@ fi
 
 # Extract Alpine and Windows config IDs based on label matches
 ALPINE_CONFIG=$(echo "$configs" | jq -r '.data[] | select(.label | test("Alpine"; "i")) | .id' | head -n1)
+log "Alpine Config: $ALPINE_CONFIG"
 WINDOWS_CONFIG=$(echo "$configs" | jq -r '.data[] | select(.label | test("System"; "i")) | .id' | head -n1)
-
+log "Windows Config: $WINDOWS_CONFIG"
 if [ -z "$ALPINE_CONFIG" ] || [ "$ALPINE_CONFIG" = "null" ]; then
     log "ERROR: Could not find config labeled 'Alpine'"
     log "Configs available: $(echo "$configs" | jq -r '.data[].label')"
