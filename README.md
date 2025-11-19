@@ -7,5 +7,4 @@
 - run instance.sh
 
 Current Needs:
-  -- Add change to multi to build all instance shells first and populate var as $instance_number
-  - Add mgmt vlan for install time for private image servers
+    - Add mgmt vlan for install time for private image servers
