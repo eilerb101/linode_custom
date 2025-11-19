@@ -15,7 +15,24 @@
 - A Single bash script (debian based) to create the instances and send data to the Stackscript
 
 ## Directions for use:
+- Download the Stackscript and import it into your Linode stackscripts for use with Alpine 3.22 images. Make note of the stackscript ID
 - Download opnsense_ha_deploy.sh on to a debian based system with jq and curl
 - `chmod +x opnsense_ha_deploy.sh`
 - Download opnsense.config
 - `vi opnsense.config` and make the following changes:
+  - Select a Linode Region, the only requirement is that it supports VLAN and IP Sharing. This is where your HA pair will be deployed in a placement group.
+  - Give it a label, this will be the prefix of your instance within Linode
+  - Give the pair a tag, this will help you find them in the UI or API.
+  - The root pass is not super important, this root pass will only be for the bootstrapping of the image. So it will *NOT* be the root pass of your Firewall pair
+  - Select you instance type, I would not suggest shared or GPU for this purpose
+  - fill in your minimum RAM in GB and minimum vCPU, the script will use the smallest instance that meets both needs
+  - Enter your stack script ID from the Linode platform. This is the ID of the script you uploaded.
+  - Create a VLAN tag for your LAN
+  - Give a CIDR in proper notation (n.n.n.n/n) for your LAN, the OPNSense devices will use this to determine their own IPs, and the DHCP range
+    - Active will be the network address plus 2
+    - Standby will be the network address plus 3
+    - The shared CARP address on the LAN side will be the network address plus 1
+    - The DHCP range for your clients will be 10 above the network ID and the range will stop 5 below the broadcast
+- `Esc` then `:x` to save the file and exit
+- last, ensure you have a proper token with rights to deploy instances, create vlans, manage ips, create keys and access object storage and create a var token with `export token=yourlinodepersonalaccesstoken` 
+- Now run the script with a `./opnsense_deploy_ha.sh`
