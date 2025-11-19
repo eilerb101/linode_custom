@@ -15,7 +15,7 @@
 - A Single bash script (debian based) to create the instances and send data to the Stackscript
 
 ## Directions for use:
-- Download ```opnsense_ha_deploy.sh on to a debian based system with jq and curl
-- chmod +x ```opnsense_ha_deploy.sh
-- Download ```opnsense.config
-- vi `opnsense.config and make the following changes:
+- Download opnsense_ha_deploy.sh on to a debian based system with jq and curl
+- `chmod +x opnsense_ha_deploy.sh`
+- Download opnsense.config
+- `vi opnsense.config` and make the following changes:
