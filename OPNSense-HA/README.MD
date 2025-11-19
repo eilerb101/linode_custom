@@ -4,12 +4,12 @@
 - 2 VLANs
 - 2 Instances with public Interfaces
 - A Linode Object Storage Bucket
-    - A qcow2 image for OPNSense Active Instance
+  - A qcow2 image for OPNSense Active Instance
     - Startup script in /usr/local/etc/rc.syshook.d/start
-*--- The Linode Metadata service for LAN, WAN and BGP reconfiguration 
-*-- A qcow2 image for OPNSense Standby Instance
---- Startup script in /usr/local/etc/rc.syshook.d/start
---- The Linode Metadata service for LAN, WAN and BGP reconfiguration
+    - The Linode Metadata service for LAN, WAN and BGP reconfiguration 
+  - A qcow2 image for OPNSense Standby Instance
+    - Startup script in /usr/local/etc/rc.syshook.d/start
+    - The Linode Metadata service for LAN, WAN and BGP reconfiguration
 - Linode IP Sharing from Active to Standby
 - A single Stackscript for Alpine 3.22 that images the Linode with the OPNSense qcow2 images
 - A Single bash script (debian based) to create the instances and send data to the Stackscript
