@@ -1,5 +1,5 @@
-#OpenSense HA Deployment on Linode
-##Opensense HA Deployment leverages the following components on Linode
+# OpenSense HA Deployment on Linode
+## Opensense HA Deployment leverages the following components on Linode
 - 1 Placement Group
 - 2 VLANs
 - 2 Instances with public Interfaces
