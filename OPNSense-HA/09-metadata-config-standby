@@ -1,0 +1,311 @@
+#!/bin/sh
+
+# Metadata-driven OPNsense Configuration Script
+# Place in: /usr/local/etc/rc.syshook.d/early/99-metadata-config
+
+CONFIG_FILE="/conf/config.xml"
+BACKUP_FILE="/conf/config.xml.backup"
+LOG_TAG="metadata-config"
+
+# Function to log messages
+log_msg() {
+    logger -t "$LOG_TAG" "$1"
+    echo "$1"
+}
+
+# Function to calculate network address from IP/CIDR
+calculate_network() {
+    local ip=$1
+    local bits=$2
+    local IFS='.'
+    set -- $ip
+    local ip1=$1 ip2=$2 ip3=$3 ip4=$4
+    
+    # Calculate mask
+    local mask=$((0xffffffff << (32 - bits) & 0xffffffff))
+    local m1=$(( (mask >> 24) & 0xff ))
+    local m2=$(( (mask >> 16) & 0xff ))
+    local m3=$(( (mask >> 8) & 0xff ))
+    local m4=$(( mask & 0xff ))
+    
+    # Calculate network address
+    local n1=$(( ip1 & m1 ))
+    local n2=$(( ip2 & m2 ))
+    local n3=$(( ip3 & m3 ))
+    local n4=$(( ip4 & m4 ))
+    
+    echo "${n1}.${n2}.${n3}.${n4}:${m1}.${m2}.${m3}.${m4}"
+}
+
+# Function to calculate broadcast address
+calculate_broadcast() {
+    local ip=$1
+    local bits=$2
+    local IFS='.'
+    set -- $ip
+    local ip1=$1 ip2=$2 ip3=$3 ip4=$4
+    
+    # Calculate inverse mask
+    local mask=$((0xffffffff << (32 - bits) & 0xffffffff))
+    local inv_mask=$((~mask & 0xffffffff))
+    
+    # Calculate broadcast
+    local host_mask=$((0xffffffff << (32 - bits) & 0xffffffff))
+    local n1=$(( (ip1 & (host_mask >> 24 & 0xff)) | (inv_mask >> 24 & 0xff) ))
+    local n2=$(( (ip2 & (host_mask >> 16 & 0xff)) | (inv_mask >> 16 & 0xff) ))
+    local n3=$(( (ip3 & (host_mask >> 8 & 0xff)) | (inv_mask >> 8 & 0xff) ))
+    local n4=$(( (ip4 & (host_mask & 0xff)) | (inv_mask & 0xff) ))
+    
+    echo "${n1}.${n2}.${n3}.${n4}"
+}
+
+# Function to add to last octet
+add_to_ip() {
+    local ip=$1
+    local add=$2
+    local IFS='.'
+    set -- $ip
+    echo "${1}.${2}.${3}.$(($4 + add))"
+}
+
+log_msg "Starting metadata configuration..."
+
+# Backup existing config
+cp "$CONFIG_FILE" "$BACKUP_FILE"
+
+# Get metadata token
+log_msg "Fetching metadata token..."
+TOKEN=$(curl -s --max-time 10 -X PUT -H 'Metadata-Token-Expiry-Seconds: 3600' http://[fd00:a9fe:a9fe::1]/v1/token)
+
+if [ -z "$TOKEN" ]; then
+    log_msg "ERROR: Failed to obtain metadata token"
+    exit 1
+fi
+
+log_msg "Token obtained successfully"
+
+# Get network information
+log_msg "Fetching network metadata..."
+NETWORK_DATA=$(curl -s --max-time 10 -H "Metadata-Token: $TOKEN" http://[fd00:a9fe:a9fe::1]/v1/network)
+
+if [ -z "$NETWORK_DATA" ]; then
+    log_msg "ERROR: Failed to fetch network metadata"
+    exit 1
+fi
+
+# Extract first IPAM address (CIDR)
+CIDR=$(echo "$NETWORK_DATA" | awk -F': ' '/interfaces\.ipam_address/ {print $2; exit}')
+
+if [ -z "$CIDR" ]; then
+    log_msg "ERROR: No IPAM address found in metadata"
+    exit 1
+fi
+
+log_msg "Found CIDR: $CIDR"
+
+# Split CIDR into IP and BITS
+IP=$(echo "$CIDR" | cut -d'/' -f1)
+BITS=$(echo "$CIDR" | cut -d'/' -f2)
+
+log_msg "IP: $IP, BITS: $BITS"
+
+# Calculate network and mask
+CALC_RESULT=$(calculate_network "$IP" "$BITS")
+NETWORK=$(echo "$CALC_RESULT" | cut -d':' -f1)
+MASK=$(echo "$CALC_RESULT" | cut -d':' -f2)
+
+log_msg "NETWORK: $NETWORK, MASK: $MASK"
+
+# Calculate IP addresses
+ROUTER=$(add_to_ip "$NETWORK" 1)
+ROUTER_A=$(add_to_ip "$NETWORK" 2)
+ROUTER_B=$(add_to_ip "$NETWORK" 3)
+RDS=$(add_to_ip "$NETWORK" 4)
+START=$(add_to_ip "$NETWORK" 10)
+
+# Calculate END (broadcast - 6)
+BROADCAST=$(calculate_broadcast "$IP" "$BITS")
+END=$(add_to_ip "$BROADCAST" -6)
+
+log_msg "ROUTER: $ROUTER"
+log_msg "ROUTER_A: $ROUTER_A"
+log_msg "ROUTER_B: $ROUTER_B"
+log_msg "RDS: $RDS"
+log_msg "START: $START"
+log_msg "END: $END"
+
+# Get region
+log_msg "Fetching region metadata..."
+INSTANCE_DATA=$(curl -s --max-time 10 -H "Metadata-Token: $TOKEN" http://[fd00:a9fe:a9fe::1]/v1/instance)
+REGION=$(echo "$INSTANCE_DATA" | awk -F': ' '/region/ {print $2}')
+
+if [ -z "$REGION" ]; then
+    log_msg "ERROR: Failed to fetch region"
+    exit 1
+fi
+
+# Normalize region to lowercase
+REGION=$(echo "$REGION" | tr '[:upper:]' '[:lower:]')
+log_msg "Region: $REGION"
+
+# Map region to REGIONID
+case "$REGION" in
+    "nl-ams") REGIONID=22 ;;
+    "us-southeast") REGIONID=4 ;;
+    "in-maa") REGIONID=25 ;;
+    "us-ord") REGIONID=18 ;;
+    "us-central") REGIONID=2 ;;
+    "eu-central") REGIONID=10 ;;
+    "de-fra-2") REGIONID=47 ;;
+    "us-west") REGIONID=3 ;;
+    "id-cgk") REGIONID=29 ;;
+    "eu-west") REGIONID=7 ;;
+    "gb-lon") REGIONID=44 ;;
+    "us-lax") REGIONID=30 ;;
+    "es-mad") REGIONID=24 ;;
+    "au-mel") REGIONID=45 ;;
+    "us-mia") REGIONID=28 ;;
+    "it-mil") REGIONID=27 ;;
+    "ap-west") REGIONID=14 ;;
+    "in-bom-2") REGIONID=46 ;;
+    "us-east") REGIONID=6 ;;
+    "jp-osa") REGIONID=26 ;;
+    "fr-par") REGIONID=19 ;;
+    "br-gru") REGIONID=21 ;;
+    "us-sea") REGIONID=20 ;;
+    "ap-south") REGIONID=9 ;;
+    "sg-sin-2") REGIONID=48 ;;
+    "se-sto") REGIONID=23 ;;
+    "ap-southeast") REGIONID=16 ;;
+    "ap-northeast") REGIONID=11 ;;
+    "jp-tyo-3") REGIONID=49 ;;
+    "ca-central") REGIONID=15 ;;
+    "us-iad") REGIONID=17 ;;
+    *) 
+        log_msg "ERROR: Unknown region: $REGION"
+        exit 1
+        ;;
+esac
+
+log_msg "Region ID: $REGIONID"
+
+# Get active IPv4
+ACTIVEIP=$(echo "$NETWORK_DATA" | awk -F': ' '/ipv4\.public/ {print $2; exit}')
+
+# Remove /32 suffix if present
+ACTIVEIP=$(echo "$ACTIVEIP" | cut -d'/' -f1)
+log_msg "Active IP: $ACTIVEIP"
+
+# Check for shared IP
+SHAREDIP=$(echo "$NETWORK_DATA" | awk -F': ' '/ipv4\.shared/ {print $2; exit}')
+
+if [ -n "$SHAREDIP" ]; then
+    MODE="standby"
+    SHAREDIP=$(echo "$SHAREDIP" | cut -d'/' -f1)
+    log_msg "Shared IP found: $SHAREDIP, MODE: standby"
+else
+    MODE="active"
+    log_msg "No shared IP found, MODE: active"
+fi
+
+# Only modify config if MODE is standby
+if [ "$MODE" = "standby" ]; then
+    log_msg "Updating configuration file..."
+    
+    # Create temporary file for modifications
+    TMP_FILE=$(mktemp)
+    cp "$CONFIG_FILE" "$TMP_FILE"
+    
+    # Use sed to update values - BSD-compatible syntax
+    sed -i '' "/<system>/,/<\/system>/ s|<hostname>[^<]*</hostname>|<hostname>${REGION}-B</hostname>|" "$TMP_FILE"
+    sed -i '' "/<system>/,/<\/system>/ s|<domain>[^<]*</domain>|<domain>cloudpc.workspot.com</domain>|" "$TMP_FILE"
+    
+    # Subnet bits
+    sed -i '' "/<virtualip/,/<\/virtualip>/ s|<subnet_bits>[0-9]*</subnet_bits>|<subnet_bits>${BITS}</subnet_bits>|" "$TMP_FILE"
+    sed -i '' "/<lan>/,/<\/lan>/ s|<subnet>[0-9]*</subnet>|<subnet>${BITS}</subnet>|" "$TMP_FILE"
+    sed -i '' "/<lan>/,/<\/lan>/ s|<ipaddr>[^<]*</ipaddr>|<ipaddr>${ROUTER_B}</ipaddr>|" "$TMP_FILE"
+    # DHCP start address
+    sed -i '' "s|<start_addr>[^<]*</start_addr>|<start_addr>${START}</start_addr>|" "$TMP_FILE"
+    
+    # DHCP end address
+    sed -i '' "s|<end_addr>[^<]*</end_addr>|<end_addr>${END}</end_addr>|" "$TMP_FILE"
+    
+    # Subnet mask
+    sed -i '' "s|<subnet_mask>[^<]*</subnet_mask>|<subnet_mask>${MASK}</subnet_mask>|" "$TMP_FILE"
+    
+    # DHCP option 3 (gateway) - need to match the specific UUID
+    sed -i '' "/<dhcp_options uuid=\"3897f4f2-9e7f-46dd-a57e-108f7abae90c\">/,/<\/dhcp_options>/ s|<value>[^<]*</value>|<value>${ROUTER}</value>|" "$TMP_FILE"
+    
+    # DHCP option 6 (DNS) - need to match the specific UUID
+    sed -i '' "/<dhcp_options uuid=\"8cbc2590-37bf-467c-8a38-7526b9f0890f\">/,/<\/dhcp_options>/ s|<value>[^<]*</value>|<value>${ROUTER}</value>|" "$TMP_FILE"
+    
+    # NAT rule target (RDS)
+    sed -i '' "/<associated-rule-id>nat_690e25fa75f753.00845760<\/associated-rule-id>/,/<\/rule>/ s|<target>[^<]*</target>|<target>${RDS}</target>|" "$TMP_FILE"
+    
+    # NAT rule destination (ACTIVEIP)
+    sed -i '' "/<associated-rule-id>nat_690e25fa75f753.00845760<\/associated-rule-id>/,/<\/rule>/ s/<address>[^<]*<\/address>/<address>${SHAREDIP}<\/address>/" "$TMP_FILE"
+    # Filter rule destination (RDS)
+    sed -i '' "/<rule uuid=\"33331121-f590-4667-9d86-4d733b809da3\">/,/<\/rule>/ s|<destination>.*<address>[^<]*</address>|<destination><address>${RDS}</address>|" "$TMP_FILE"
+    
+    # BGP networks
+    sed -i '' "/<bgp version/,/<\/bgp>/ s|<networks>[0-9./]*</networks>|<networks>${SHAREDIP}/32</networks>|" "$TMP_FILE"
+    # BGP Router ID - set to ACTIVEIP
+    sed -i '' "s|<routerid>[^<]*</routerid>|<routerid>${ACTIVEIP}</routerid>|" "$TMP_FILE"
+    # BGP neighbors - replace region ID in IPv6 addresses
+    sed -i '' "/<neighbor uuid=\"68e3ce2c-929d-4dd5-a2c9-bca55ebedda1\">/,/<\/neighbor>/ s|<address>2600:3c0f:[0-9]*:[0-9]*::1</address>|<address>2600:3c0f:${REGIONID}:34::1</address>|" "$TMP_FILE"    
+    sed -i '' "/<neighbor uuid=\"dfa0098d-c327-4eca-8d74-0f88c7566f15\">/,/<\/neighbor>/ s|<address>2600:3c0f:[0-9]*:[0-9]*::2</address>|<address>2600:3c0f:${REGIONID}:34::2</address>|" "$TMP_FILE"
+    sed -i '' "/<neighbor uuid=\"6a5d4f60-cf87-4fd7-ba1f-8c8384f38fc9\">/,/<\/neighbor>/ s|<address>2600:3c0f:[0-9]*:[0-9]*::3</address>|<address>2600:3c0f:${REGIONID}:34::3</address>|" "$TMP_FILE"
+    sed -i '' "/<neighbor uuid=\"bd1759fc-7e7d-4e35-9ae4-ffcaddc8e705\">/,/<\/neighbor>/ s|<address>2600:3c0f:[0-9]*:[0-9]*::4</address>|<address>2600:3c0f:${REGIONID}:34::4</address>|" "$TMP_FILE"
+    # Virtual IP - ROUTER
+    #sed -i '' "/<vip uuid=\"fe11402d-1eb3-4169-8e44-4d2373db3cb3\">/,/<\/vip>/ s|<subnet>[^<]*</subnet>|<subnet>${ROUTER}</subnet>|" "$TMP_FILE"
+    # Virtual IP - BITS
+    #sed -i '' "/<vip uuid=\"fe11402d-1eb3-4169-8e44-4d2373db3cb3\">/,/<\/vip>/ s|<subnet_bits>[^<]*</subnet_bits>|<subnet_bits>${BITS}</subnet_bits>|" "$TMP_FILE"
+    # Virtual IP - ROUTER-A (peer)
+    #sed -i '' "/<vip uuid=\"fe11402d-1eb3-4169-8e44-4d2373db3cb3\">/,/<\/vip>/ s|<peer>[^<]*</peer>|<peer>${ROUTER_A}</peer>|" "$TMP_FILE"
+    # Virtual IP - ACTIVEIP
+    #sed -i '' "/<vip uuid=\"1995d3e2-61de-494b-8f4a-1a082def5411\">/,/<\/vip>/ s|<subnet>[^<]*</subnet>|<subnet>${SHAREDIP}</subnet>|" "$TMP_FILE"
+#
+# Make LAN subnet more specific - only match <subnet> not <subnet_bits>
+sed -i '' "/<lan>/,/<\/lan>/ s|<subnet>[0-9]*</subnet>|<subnet>${BITS}</subnet>|" "$TMP_FILE"
+
+# Virtual IP - ROUTER (CARP VIP)
+sed -i '' "/<vip uuid=\"fe11402d-1eb3-4169-8e44-4d2373db3cb3\">/,/<\/vip>/ s|<subnet>[^<]*</subnet>|<subnet>${ROUTER}</subnet>|" "$TMP_FILE"
+
+# Virtual IP - BITS (CARP VIP)
+sed -i '' "/<vip uuid=\"fe11402d-1eb3-4169-8e44-4d2373db3cb3\">/,/<\/vip>/ s|<subnet_bits>[^<]*</subnet_bits>|<subnet_bits>${BITS}</subnet_bits>|" "$TMP_FILE"
+# Virtual IP - ROUTER-A peer (CARP VIP)
+sed -i '' "/<vip uuid=\"fe11402d-1eb3-4169-8e44-4d2373db3cb3\">/,/<\/vip>/ s|<peer>[^<]*</peer>|<peer>${ROUTER_A}</peer>|" "$TMP_FILE"
+
+# Virtual IP - SHAREDIP (lo0 alias VIP)
+sed -i '' "/<vip uuid=\"dc0ccdba-8abd-48a3-9f5b-bdf646fe1a68\">/,/<\/vip>/ s|<subnet>[^<]*</subnet>|<subnet>${SHAREDIP}</subnet>|" "$TMP_FILE"
+
+# Calculate gateway from SHAREDIP (first 3 octets + .1)
+GATEWAY=$(echo ${SHAREDIP} | cut -d. -f1-3).1
+
+# Virtual IP - Gateway (lo0 alias VIP)
+sed -i '' "/<vip uuid=\"dc0ccdba-8abd-48a3-9f5b-bdf646fe1a68\">/,/<\/vip>/ s|<gateway>[^<]*</gateway>|<gateway>${GATEWAY}</gateway>|" "$TMP_FILE"
+
+# Virtual IP - subnet_bits for lo0 (should be /32 for single IP, or your specific value)
+sed -i '' "/<vip uuid=\"dc0ccdba-8abd-48a3-9f5b-bdf646fe1a68\">/,/<\/vip>/ s|<subnet_bits>[^<]*</subnet_bits>|<subnet_bits>32</subnet_bits>|" "$TMP_FILE"
+
+    # Move modified config into place
+    mv "$TMP_FILE" "$CONFIG_FILE"
+/usr/local/etc/rc.reload_all 
+    log_msg "Configuration updated successfully"
+    log_msg "Summary:"
+    log_msg "  CIDR: $CIDR"
+    log_msg "  Network: $NETWORK"
+    log_msg "  Mask: $MASK"
+    log_msg "  Router: $ROUTER"
+    log_msg "  Router-A: $ROUTER_A"
+    log_msg "  Router-B: $ROUTER_B"
+    log_msg "  RDS: $RDS"
+    log_msg "  DHCP Range: $START - $END"
+    log_msg "  Active IP: $ACTIVEIP"
+    log_msg "  Region: $REGION (ID: $REGIONID)"
+    log_msg "  Mode: $MODE"
+    log_msg "  Shared IP: $SHAREDIP"
+fi
+
+log_msg "Metadata configuration complete"
+exit 0
