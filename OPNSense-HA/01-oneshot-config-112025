@@ -8,8 +8,8 @@ fi
 CONFIG_FILE="/conf/config.xml"
 BACKUP_FILE="/conf/config.xml.backup"
 LOG_TAG="metadata-config"
-KEY="ZKKyN2JMPrrRHNIAaoDefTLGsg64JmixDOYlJuV6SIExVYugq0KaJipJOv3+WlqAn8ghT1qNGuo3JwT8"
-SECRET="AEbaHZ4OC28GsUHBKqI3oiBp8xE2TwAESygbr5q5n2e12FTujQpPvgGV0UYAHlMOVOTilzrT7ADBhb0f"
+KEY=""
+SECRET=""
 
 
 # Function to log messages
