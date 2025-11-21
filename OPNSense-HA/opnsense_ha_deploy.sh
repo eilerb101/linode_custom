@@ -18,7 +18,7 @@ log_info() {
 }
 
 # Configuration file path
-CONFIG_FILE="opnsense.config"
+CONFIG_FILE="instance.config"
 
 # Function to get config value from file or environment variable
 get_config() {
@@ -733,9 +733,7 @@ EOF
 {
   "label": "Alpine",
   "interfaces": [
-    {"purpose": "public", "primary": true},
-    {"purpose": "vlan", "label": "$network_id", "ipam_address": "$subnet_CIDR"},
-    {"purpose": "vlan", "label": "mgmt"}
+    {"purpose": "public", "primary": true}
   ],
   "virt_mode": "paravirt",
   "kernel": "linode/grub2",
@@ -856,24 +854,6 @@ create_instance "${label}-standby-$(date +%s)" "$standby" "true"
 standby_instance_id="$instance_id"
 
 log_info "Standby instance created with ID: $standby_instance_id"
-
-# Share the active instance's IP with the standby instance
-log_info "Sharing IP $active_ipv4 with standby instance..."
-share_ip_payload=$(cat <<EOF
-{
-  "ips": ["$active_ipv4"],
-  "linode_id": $standby_instance_id
-}
-EOF
-)
-
-share_response=$(api_call "POST" "${API_BASE}/networking/ips/share" "${share_ip_payload}")
-if [[ $? -ne 0 ]]; then
-    log_failure "Failed to share IP address with standby instance"
-fi
-
-log_info "IP address shared successfully"
-
 # Final summary
 echo ""
 echo "=== HA Deployment Complete ==="
