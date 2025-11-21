@@ -18,7 +18,7 @@ log_info() {
 }
 
 # Configuration file path
-CONFIG_FILE="instance.config"
+CONFIG_FILE="opnsense.config"
 
 # Function to get config value from file or environment variable
 get_config() {
