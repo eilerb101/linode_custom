@@ -3,6 +3,9 @@
 - 1 Placement Group
 - 2 VLANs
 - 2 Instances with public Interfaces
+- These 2 qcow2 OPNSense Images:
+  - https://chicago-isos.us-ord-1.linodeobjects.com/Workspot%2Factive-112025-rev1.qcow2
+  - https://chicago-isos.us-ord-1.linodeobjects.com/Workspot%2Fstandby-112025-rev1.qcow2
 - A Linode Object Storage Bucket
   - A qcow2 image for OPNSense Active Instance
     - Startup script in /usr/local/etc/rc.syshook.d/start
