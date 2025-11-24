@@ -43,3 +43,4 @@
 - `Esc` then `:x` to save the file and exit
 - last, ensure you have a proper token with rights to deploy instances, create vlans, manage ips, create keys and access object storage and create a var token with `export token=yourlinodepersonalaccesstoken` 
 - Now run the script with a `./opnsense_deploy_ha.sh`
+- Access your instances on HTTPS port 8087. If primary fails, the secondary will use the IP of the primary as well.
