@@ -22,6 +22,7 @@
 
 ## Directions for use:
 - Download the Stackscript and import it into your Linode stackscripts for use with Alpine 3.22 images. Make note of the stackscript ID
+- Download the 2 OPNSense qcow2 images and upload to your own Object Storage bucket.
 - Download opnsense_ha_deploy.sh on to a debian based system with jq and curl
 - `chmod +x opnsense_ha_deploy.sh`
 - Download opnsense.config
