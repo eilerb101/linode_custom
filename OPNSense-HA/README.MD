@@ -30,7 +30,7 @@
   - Give it a label, this will be the prefix of your instance within Linode
   - Give the pair a tag, this will help you find them in the UI or API.
   - The root pass is not super important, this root pass will only be for the bootstrapping of the image. So it will *NOT* be the root pass of your Firewall pair
-    ** - The root pass of your firewall pair will be L1n0d3 - CHANGE THIS!!**
+    - **The root pass of your firewall pair will be L1n0d3 - CHANGE THIS!!**
   - Select you instance type, I would not suggest shared or GPU for this purpose
   - fill in your minimum RAM in GB and minimum vCPU, the script will use the smallest instance that meets both needs
   - Enter your stack script ID from the Linode platform. This is the ID of the script you uploaded.
