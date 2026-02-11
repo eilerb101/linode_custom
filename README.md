@@ -14,6 +14,6 @@ Current Needs:
 - Utilization: Run on debian or ubuntu systems with curl and jq
 - Load the Stackscript in to Linode system
 - Place your image file in a Linode Object Storage Bucket
-- Follow the prompts in the instance.config
-- chmod +x multi_instance.sh
-- run ha_opnsense.sh
+- Follow the prompts in the opnsense.config
+- chmod +x opnsense_ha_deploy.sh
+- run opnsense_ha_deploy.sh
