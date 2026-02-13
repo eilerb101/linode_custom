@@ -65,6 +65,8 @@ HEADERS=(-H "Authorization: Bearer $token" -H "Content-Type: application/json")
 # Retry settings
 MAX_RETRIES=${MAX_RETRIES:-50}
 RETRY_DELAY=${RETRY_DELAY:-7}
+LOG_FILE=${LOG_FILE:-opnsense.log}
+touch "$LOG_FILE" 2>/dev/null || LOG_FILE="opnsense.log"                                                                echo "Logging to $LOG_FILE"
 
 # Validate required variables exist
 required_vars=("token" "region" "linode_type" "memory" "network_id" "subnet_CIDR" "virtualdisk" "active" "standby")
