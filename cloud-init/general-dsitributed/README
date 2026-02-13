@@ -1,0 +1,5 @@
+New version that includes ability to deploy to distributed regions if your token allows:
+changes:
+  Added vars to determine version of cloud-init yaml based on site_type, instance type based on site_type and disk needed.
+IMPORTANT: If you deploy to a distributed site, the script will force you in to a dedicated-edge plan, which is the only plan available in those sites.
+
