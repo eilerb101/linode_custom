@@ -1,4 +1,4 @@
-You need these 3 files:
+testYou need these 3 files:
 template.yaml
   --this is the file that the script pulls in to create the cloud init yaml using dynamic variables from with the .sh 
   --unlike the stackscript, this yaml uses the linode metatdata api to discover its own instance id.
