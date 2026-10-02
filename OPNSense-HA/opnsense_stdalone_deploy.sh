@@ -593,7 +593,7 @@ create_instance() {
   "region": "$region",
   "label": "$instance_label",
   "tags": ["$tag"],
-  "booted": false,
+  "booted": false
 }
 EOF
 )
@@ -619,10 +619,11 @@ EOF
     "bucket_key":"$bucket_key",
     "bucket_secret":"$bucket_secret",
     "bucket_endpoint":"$bucket_endpoint",
+    "instance_role":"active",
+    "shared_ipv4":"0.0.0.0"
 }
 EOF
 )
-    fi
     
     create_disk1=$(cat <<EOF
 {
@@ -699,7 +700,7 @@ EOF
   "label": "System",
   "interfaces": [
     {"purpose": "public", "primary": true},
-    {"purpose": "vlan", "label": "$network_id", "ipam_address": "$subnet_CIDR"},
+    {"purpose": "vlan", "label": "$network_id", "ipam_address": "$subnet_CIDR"}
   ],
   "virt_mode": "paravirt",
   "kernel": "linode/direct-disk",
