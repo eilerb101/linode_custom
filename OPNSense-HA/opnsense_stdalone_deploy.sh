@@ -599,7 +599,12 @@ EOF
 )
 
     instance_response=$(api_call "POST" "${API_BASE}/linode/instances" "${create_payload}")
-    
+    active_ipv4=$(echo "$instance_response" | jq -r '.ipv4[0] // empty')
+        if [[ -z "$active_ipv4" ]]; then
+            log_failure "Failed to retrieve IPv4 address for active instance"
+        fi
+    log_info "Active instance IPv4: $active_ipv4"
+
     instance_id=$(echo "$instance_response" | jq -r '.id')
     if [[ -z "$instance_id" || "$instance_id" == "null" ]]; then
         error_msg=$(echo "$instance_response" | jq -r '.errors[]?.reason' | tr '\n' ' ')
